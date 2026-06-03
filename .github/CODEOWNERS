@@ -1,0 +1,6 @@
+# These owners will be the default owners for everything in
+# the repo. Unless a later match takes precedence,
+*       @hakimAtTripla
+
+/terraform-parse/ @ruhut
+/dynamic-pricing/ @hakimAtTripla @Darrenla
