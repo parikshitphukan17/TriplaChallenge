@@ -1,0 +1,250 @@
+---
+openapi: 3.0.0
+info:
+  title: Dynamic Pricing Proxy API
+  version: v1
+  description: Proxy service designed to fetch pricing rates from the upstream API
+    while caching, rate-limiting, and managing outages resiliently.
+paths:
+  "/api/v1/pricing":
+    get:
+      summary: Retrieves pricing rate
+      tags:
+      - Pricing
+      parameters:
+      - name: period
+        in: query
+        description: Season period (Summer, Autumn, Winter, Spring)
+        required: true
+        schema:
+          type: string
+      - name: hotel
+        in: query
+        description: Hotel name (FloatingPointResort, GitawayHotel, RecursionRetreat)
+        required: true
+        schema:
+          type: string
+      - name: room
+        in: query
+        description: Room type (SingletonRoom, BooleanTwin, RestfulKing)
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: |-
+            Pricing rate successfully retrieved (Supports both fresh rates and stale fallback with disclaimer).
+
+            ### Success Scenarios
+
+            #### 1. Fresh Rate (No Disclaimer)
+            Returned when the rate is fetched within the 5-minute validity window.
+            ```json
+            {
+              "resultInfo": {
+                "code": "S",
+                "message": "Success",
+                "codeId": "1"
+              },
+              "data": {
+                "rate": 15000,
+                "disclaimer": null
+              }
+            }
+            ```
+
+            #### 2. Stale Rate Fallback (With Warning Disclaimer)
+            Served when the rate is older than 5 minutes due to upstream API downtime or synchronous fetch locks.
+            ```json
+            {
+              "resultInfo": {
+                "code": "S",
+                "message": "Success",
+                "codeId": "1"
+              },
+              "data": {
+                "rate": 15000,
+                "disclaimer": "Rates are expired, please retry again in at least 5 minutes to get latest rate"
+              }
+            }
+            ```
+          content:
+            application/json:
+              examples:
+                Fresh Rate (Default):
+                  summary: A fresh rate retrieved from the cache within the 5-minute
+                    validity window.
+                  value:
+                    resultInfo:
+                      code: S
+                      message: Success
+                      codeId: '1'
+                    data:
+                      rate: 15000
+                      disclaimer:
+                Stale Rate Fallback:
+                  summary: A stale rate served as a fallback due to upstream API downtime
+                    or synchronous locks.
+                  value:
+                    resultInfo:
+                      code: S
+                      message: Success
+                      codeId: '1'
+                    data:
+                      rate: 15000
+                      disclaimer: Rates are expired, please retry again in at least
+                        5 minutes to get latest rate
+              schema:
+                type: object
+                properties:
+                  resultInfo:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: S
+                      message:
+                        type: string
+                        example: Success
+                      codeId:
+                        type: string
+                        example: '1'
+                    required:
+                    - code
+                    - message
+                    - codeId
+                  data:
+                    type: object
+                    properties:
+                      rate:
+                        type: integer
+                        description: The current rate value
+                        example: 15000
+                      disclaimer:
+                        type: string
+                        description: Warning notice. Present only when the served
+                          rate is stale (older than 5 minutes) due to upstream API
+                          downtime or synchronous fetch locks. Omitted (null) when
+                          the rate is fresh.
+                        example: Rates are expired, please retry again in at least
+                          5 minutes to get latest rate
+                        nullable: true
+                    required:
+                    - rate
+                required:
+                - resultInfo
+                - data
+        '400':
+          description: Invalid Parameters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  resultInfo:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: F
+                      message:
+                        type: string
+                        example: 'Invalid period. Must be one of: Summer, Autumn,
+                          Winter, Spring'
+                      codeId:
+                        type: string
+                        example: INVALID_PARAMETERS
+                    required:
+                    - code
+                    - message
+                    - codeId
+                  data:
+                    type: 'null'
+                required:
+                - resultInfo
+        '404':
+          description: Rate Not Found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  resultInfo:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: F
+                      message:
+                        type: string
+                        example: Rate not found for the requested parameters.
+                      codeId:
+                        type: string
+                        example: RATE_NOT_FOUND
+                    required:
+                    - code
+                    - message
+                    - codeId
+                  data:
+                    type: 'null'
+                required:
+                - resultInfo
+        '503':
+          description: Service Unavailable (Cold Start Outage)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  resultInfo:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: F
+                      message:
+                        type: string
+                        example: Rates are unavailable and cache is empty. Please
+                          retry in 5 minutes.
+                      codeId:
+                        type: string
+                        example: SERVICE_UNAVAILABLE
+                    required:
+                    - code
+                    - message
+                    - codeId
+                  data:
+                    type: 'null'
+                required:
+                - resultInfo
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  resultInfo:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: F
+                      message:
+                        type: string
+                        example: 'An unexpected error occurred: Database connection
+                          lost'
+                      codeId:
+                        type: string
+                        example: INTERNAL_SERVER_ERROR
+                    required:
+                    - code
+                    - message
+                    - codeId
+                  data:
+                    type: 'null'
+                required:
+                - resultInfo
+servers:
+- url: http://localhost:3000
+  description: Local Proxy Server
