@@ -50,3 +50,11 @@ group :development do
   gem "listen", "~> 3.3"
 end
 
+# Observability & Observability Telemetry
+gem 'lograge'
+gem 'prometheus_exporter'
+gem 'opentelemetry-sdk'
+gem 'opentelemetry-instrumentation-rails'
+gem 'opentelemetry-instrumentation-net_http'
+gem 'opentelemetry-exporter-otlp'
+

@@ -4,6 +4,14 @@ services:
     ports:
       - "8080:8080"
 
+  prometheus-exporter:
+    build: .
+    command: bundle exec prometheus_exporter --bind 0.0.0.0 --port 9394
+    ports:
+      - "9394:9394"
+    volumes:
+      - .:/rails
+
   interview-dev:
     build: .
     ports:
@@ -12,5 +20,7 @@ services:
       - .:/rails
     environment:
       - RATE_API_URL=http://rate-api:8080
+      - PROMETHEUS_COLLECTOR_URL=http://prometheus-exporter:9394
     depends_on:
       - rate-api
+      - prometheus-exporter
