@@ -7,7 +7,10 @@ class RefreshRatesJob < ApplicationJob
   def perform(*args)
     if Api::V1::PricingService.cache_provider.cool_down_active?(COOL_DOWN_KEY)
       Rails.logger.info("RefreshRatesJob skipped: API cool-down is active.")
+      Observability::Metrics.set_circuit_breaker(true)
       return false
+    else
+      Observability::Metrics.set_circuit_breaker(false)
     end
 
     lock_key = "dynamic_pricing:refresh_lock"
@@ -17,6 +20,7 @@ class RefreshRatesJob < ApplicationJob
       return false
     end
 
+    start_time = Time.current
     max_attempts = 3
     attempt = 0
     backoff_base = 2.seconds
@@ -45,13 +49,24 @@ class RefreshRatesJob < ApplicationJob
 
         Api::V1::PricingService.cache_provider.write_rates(rates_hash)
         Rails.logger.info("RefreshRatesJob completed successfully. Cached #{rates_hash.size} rates.")
+        Observability::Metrics.set_circuit_breaker(false)
         true
       else
         raise "Upstream API error (HTTP #{response.code}): #{response.body}"
       end
     rescue => e
+      reason = if e.message.include?("Timeout") || e.is_a?(Net::ReadTimeout) || e.is_a?(Net::OpenTimeout) || e.is_a?(Timeout::Error)
+                 "timeout"
+               elsif e.message =~ /HTTP (\d+)/
+                 "http_#{$1}"
+               else
+                 "connection_failed"
+               end
+      Observability::Metrics.observe_upstream_failure(reason)
+
       Rails.logger.warn("RefreshRatesJob failed on attempt #{attempt}/#{max_attempts}: #{e.message}")
       if attempt < max_attempts
+        Observability::Metrics.observe_upstream_retry
         sleep_time = backoff_base * (2**(attempt - 1))
         Rails.logger.info("Retrying in #{sleep_time} seconds...")
         sleep(sleep_time)
@@ -59,9 +74,13 @@ class RefreshRatesJob < ApplicationJob
       else
         Rails.logger.error("RefreshRatesJob exhausted all #{max_attempts} attempts. API is offline. Activating cool-down.")
         Api::V1::PricingService.cache_provider.activate_cool_down(COOL_DOWN_KEY, COOL_DOWN_DURATION)
+        Observability::Metrics.set_circuit_breaker(true)
+        Observability::Metrics.observe_job_failure
         false
       end
     ensure
+      duration = Time.current - start_time
+      Observability::Metrics.observe_job_duration(duration)
       Api::V1::PricingService.cache_provider.release_lock(lock_key)
     end
   end

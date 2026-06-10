@@ -82,6 +82,7 @@ module Api::V1
     end
 
     def wait_for_other_worker_warmup
+      start_time = Time.current
       # Spin-lock: wait up to 1 second for the other process to finish and update cache
       payload = nil
       10.times do
@@ -89,6 +90,8 @@ module Api::V1
         payload = PricingService.cache_provider.read_rates
         break if payload
       end
+      duration = Time.current - start_time
+      Observability::Metrics.observe_cold_start_wait(duration)
       payload
     end
 
@@ -118,12 +121,15 @@ module Api::V1
         if rate_value
           @result = rate_value
           set_stale_disclaimer_if_needed(payload, rate_key)
+          Observability::Metrics.observe_cache_request(:hit)
         else
           errors << "Rate not found for the requested parameters."
+          Observability::Metrics.observe_cache_request(:miss)
         end
       else
         errors << "Rates are unavailable and cache is empty. Please retry in 5 minutes."
         Rails.logger.error("Failed to retrieve rates: Cache is empty and upstream API is offline.")
+        Observability::Metrics.observe_cache_request(:miss)
       end
     end
 

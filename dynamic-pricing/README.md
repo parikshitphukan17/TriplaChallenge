@@ -104,6 +104,21 @@ By default, the app uses a file-based cache and local locking. You can configure
 * `CACHE_PROVIDER_TYPE`: Toggle the caching backend (`redis` or `rails_cache`).
 * `REDIS_URL`: Redis connection URL (e.g. `redis://localhost:6379/0`).
 * `RATE_API_TIMEOUT_SECONDS`: Dynamic upstream API timeout in seconds (default: `3.0`).
+* `PROMETHEUS_COLLECTOR_URL`: Custom URL pointing to the Prometheus Exporter server (default: `http://localhost:9394`).
+* `OTEL_EXPORTER_OTLP_ENDPOINT`: Target OpenTelemetry collector URL (e.g., `http://localhost:4317`).
+* `OTEL_SERVICE_NAME`: Service name identifier for OTel traces (default: `dynamic-pricing-proxy`).
+
+---
+
+#### Observability & Observability Telemetry
+The application includes a built-in production-grade observability stack:
+1. **JSON Logs (`lograge`)**: Rails logs are formatted as single-line JSON payloads and automatically append OpenTelemetry `trace_id` and `span_id` context details.
+2. **HTTP Traces (`opentelemetry`)**: Automatically traces inbound HTTP requests, database SQL operations, and outbound client calls.
+3. **Prometheus Metrics (`prometheus_exporter`)**:
+   - Spins up a local metrics aggregator container.
+   - Access metrics locally by scraping: `curl http://localhost:9394/metrics`.
+   - Metrics include: cache hits/misses, circuit breaker state, upstream failures (timeout, connection failed, etc.), and job execution duration.
+
 
 
 ---

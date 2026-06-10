@@ -60,19 +60,23 @@ class Api::V1::PricingController < ApplicationController
   def validate_params
     # Validate required parameters
     unless params[:period].present? && params[:hotel].present? && params[:room].present?
+      Observability::Metrics.observe_validation_failure(:missing_params)
       return render_error("Missing required parameters: period, hotel, room", "INVALID_PARAMETERS", :bad_request)
     end
 
     # Validate parameter values
     unless VALID_PERIODS.include?(params[:period])
+      Observability::Metrics.observe_validation_failure(:period)
       return render_error("Invalid period. Must be one of: #{VALID_PERIODS.join(', ')}", "INVALID_PARAMETERS", :bad_request)
     end
 
     unless VALID_HOTELS.include?(params[:hotel])
+      Observability::Metrics.observe_validation_failure(:hotel)
       return render_error("Invalid hotel. Must be one of: #{VALID_HOTELS.join(', ')}", "INVALID_PARAMETERS", :bad_request)
     end
 
     unless VALID_ROOMS.include?(params[:room])
+      Observability::Metrics.observe_validation_failure(:room)
       return render_error("Invalid room. Must be one of: #{VALID_ROOMS.join(', ')}", "INVALID_PARAMETERS", :bad_request)
     end
   end

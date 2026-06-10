@@ -200,3 +200,28 @@ We implement a defensive **Synchronous-First Cache Expiration** pattern to handl
   - The interactive Swagger UI is served natively at `/api-docs` using mounted Rails engines, making it easy to test endpoints live.
 * **Unification Benefits:**
   By removing Minitest and adopting RSpec globally, we maintain a clean testing environment with a single, highly extensible framework, covering both unit specs and API schema validation tests in a unified pipeline.
+
+---
+
+### 6. Observability & Observability Telemetry (Logs, Metrics, Traces)
+
+Observability is a critical requirement for production APIs, enabling operations teams to diagnose latencies, track failures, and understand system bottlenecks.
+
+#### 1. Multi-Process Metrics Aggregation in Ruby
+* **The Challenge:**
+  Ruby web servers (like Puma) run multiple clustered processes to achieve concurrency. Traditional Prometheus client libraries scrape individual processes directly. However, in a clustered environment, dynamic Puma workers share the same network port and spin up/down dynamically, making direct scraping impossible or prone to socket conflicts.
+* **The Solution:**
+  We use `prometheus_exporter`, which runs a standalone metrics collector server in a separate container (port `9394`). Puma worker threads push metrics via lightweight, asynchronous HTTP POST payloads to the collector daemon. The collector aggregates these metrics globally and exposes a single unified `/metrics` scrape endpoint.
+
+#### 2. Distributed Tracing & Context Propagation
+* **Context Propagation:**
+  Using the `opentelemetry-sdk`, we automatically inject trace headers (conforming to the W3C Trace Context standard `traceparent`) into outgoing HTTP requests to the upstream pricing model API.
+* **Correlated Diagnostics:**
+  `lograge` formats Rails logs into structured single-line JSON. For every HTTP request, we dynamically append the active OpenTelemetry `trace_id` and `span_id`. This allows developers to query a trace ID in Jaeger/Tempo and instantly find all corresponding database queries, external API calls, and controller JSON log entries.
+
+#### 3. Metric Cardinality & Telemetry Safety
+* **Metric Cardinality Protection:**
+  When registering label tags in Prometheus (e.g. status code, route, period), we ensure only low-cardinality values are used. Placing high-cardinality parameters (like user UUIDs, request timestamps, or IP addresses) in label values creates an exponential explosion of timeseries data, causing memory leaks in Prometheus.
+* **Downtime Fault Tolerance:**
+  All metric writes are wrapped in safe rescue blocks in `Observability::Metrics`. If the collector daemon or container crashes, the proxy service fails-safe and logs warnings to STDOUT, but continues to serve user requests normally without raising exceptions.
+
