@@ -68,7 +68,7 @@ Send a sample GET request to verify the service is successfully reading rates fr
 ```bash
 curl 'http://localhost:3000/api/v1/pricing?period=Summer&hotel=FloatingPointResort&room=SingletonRoom'
 ```
-*Note: The first request triggers a cold-start sync fetch to populate the cache. Subsequent requests will be served under 10ms.*
+*Note: The first request triggers a cold-start sync fetch to populate the cache. Subsequent requests will be served in under 10ms.*
 
 #### Step 3: Run the RSpec Test Suite
 Run the automated RSpec tests to verify all caching, locking, retries, Cartesian mappings, and error status code handling:
@@ -115,7 +115,7 @@ Alternatively, if running outside Docker in production:
 ---
 
 #### Configuration Options
-By default, the app uses a file-based cache and local locking. You can configure the application behavior by passing environment variables:
+The application's built-in default is `rails_cache` (file-based cache with local locking). However, the Docker Compose environment overrides this to `redis` for multi-pod readiness. You can configure the application behavior by passing environment variables:
 * `CACHE_PROVIDER_TYPE`: Toggle the caching backend (`redis` or `rails_cache`).
 * `REDIS_URL`: Redis connection URL (e.g. `redis://localhost:6379/0`).
 * `REDIS_POOL_SIZE`: Pool size for Redis connection pooling (default: `5`).
@@ -127,9 +127,20 @@ By default, the app uses a file-based cache and local locking. You can configure
 
 ---
 
+#### Observability & Telemetry
+The application includes a built-in production-grade observability stack:
+1. **JSON Logs (`lograge`)**: Rails logs are formatted as single-line JSON payloads and automatically append OpenTelemetry `trace_id` and `span_id` context for correlated diagnostics.
+2. **HTTP Traces (`opentelemetry`)**: Automatically traces inbound HTTP requests, database SQL operations, and outbound client calls. Injects W3C `traceparent` headers into upstream API requests.
+3. **Prometheus Metrics (`prometheus_exporter`)**:
+   - Spins up a local metrics aggregator container.
+   - Access metrics locally by scraping: `curl http://localhost:9394/metrics`.
+   - Metrics include: cache hits/misses, circuit breaker state, upstream failures (timeout, connection failed, etc.), and job execution duration.
+
+---
+
 ## 🛠️ Optimization Details & Architecture Decisions
 
-We have fully optimized the proxy service to handle 10,000+ daily requests within the 1,000 requests/day upstream API limit. Below is an overview of the design choices made. For a deep-dive technical analysis (including concurrency mathematics, Little's Law, and thread safety), please refer to **[README_CONSIDERATIONS.md](file:///Users/parikshitphukan/Desktop/Repo/interview/dynamic-pricing/README_CONSIDERATIONS.md)**.
+We have fully optimized the proxy service to handle 10,000+ daily requests within the 1,000 requests/day upstream API limit. Below is an overview of the design choices made. For a deep-dive technical analysis (including concurrency mathematics, Little's Law, and thread safety), please refer to **[README_CONSIDERATIONS.md](./README_CONSIDERATIONS.md)**.
 
 ### 1. Capacity Planning & Multi-Pod Redis Scaling
 * **The Calculations:**
@@ -145,7 +156,7 @@ We have fully optimized the proxy service to handle 10,000+ daily requests withi
   - Standard lazy-loading (Cache-Aside) suffers from **Cache Stampede (Thundering Herd)** where multiple concurrent requests on a cache miss hit the upstream API at the same time, quickly exhausting the quota.
   - The parameter space is closed and small: $4 \text{ periods} \times 3 \text{ hotels} \times 3 \text{ rooms} = 36$ total combinations.
   - The Pricing Model API supports querying an array of attributes in a single request.
-  - **Our Solution:** A decoupled cron job triggers the Rake task `rates:refresh` every **4 minutes** to run the bulk pre-fetch. This completely removes the fragile, in-process background thread from the Puma server processes, saving memory and eliminating Puma restart issues.
+  - **Our Solution:** A decoupled cron job triggers the Rake task `rates:refresh` every **4 minutes** to run the bulk pre-fetch. This completely removes the fragile, in-process background thread from the Puma server processes, saving memory and avoiding thread lifecycle issues during Puma restarts.
   - **Quota Consumption:** $\frac{24 \times 60}{4} = 360$ API requests/day (only **36%** of the 1,000 requests/day quota), ensuring users experience **100% cache hits** with sub-10ms response times.
 
 ### 3. Provider Pattern for Cache & Locks
@@ -154,7 +165,7 @@ We have fully optimized the proxy service to handle 10,000+ daily requests withi
   - `RedisProvider`: Direct connection using a pooled `redis` client.
 * Easily switch providers via the `CACHE_PROVIDER_TYPE` environment variable.
 
-### 4. Real-World Resiliency & Defensive Coding
+### 4. Real-World Resiliency & Failure Handling
 * **Synchronous-First Cache Expiration:** If the cache is expired (> 5 minutes old) but the scheduler hasn't updated it yet, incoming user requests try to acquire the refresh lock to fetch fresh rates synchronously (returning them immediately with no disclaimer on success). If the API is offline, they gracefully fall back to stale cached rates (with a warning disclaimer) and enqueue an asynchronous refresh job. If another worker is already fetching rates (lock is held), the request immediately serves the stale rate fallback without spin-locking, preventing web server thread starvation.
 * **Locking & Concurrency:** Both background jobs and cold-start requests utilize a provider lock key `dynamic_pricing:refresh_lock` with atomic writes (`unless_exist: true`) to prevent multiple processes from spamming the API simultaneously. If a request arrives on a cold start and the lock is held, it spin-locks (sleeps 100ms and retries, up to 1 second) and resolves from the cache warmed by the active fetcher. For expired but populated cache reads, if the lock is held, stale rates are served immediately with no spin-locking.
-* **API Outages & Socket Errors:** `RefreshRatesJob` sets a configurable HTTP timeout (defaulting to **3 seconds**, customizable via `RATE_API_TIMEOUT_SECONDS`) and handles socket errors, retrying up to 3 times with exponential backoff (sleeping 2s, then 4s). If all retries are exhausted, the proxy activates a **10-minute API Cool-Down (Circuit Breaker)**. During this cool-down, any scheduler cycles or user request sync-refreshes skip calling the upstream API to protect the 1,000 requests/day quota. If the API remains down, the proxy continues serving stale cached rates indefinitely (deliberate design choice for maximum availability) rather than failing user booking funnels. If the cache is completely empty (e.g. cold start + API down), the proxy returns a `503 Service Unavailable`.
+* **API Outages & Socket Errors:** `RefreshRatesJob` sets a configurable HTTP timeout (defaulting to **3 seconds**, customizable via `RATE_API_TIMEOUT_SECONDS`) and handles socket errors, retrying up to 3 times with exponential backoff and random jitter to prevent synchronized retries across pods. If all retries are exhausted, the proxy activates a **10-minute API Cool-Down (Circuit Breaker)**. During this cool-down, any cron-triggered refresh cycles or user request sync-refreshes skip calling the upstream API to protect the 1,000 requests/day quota. If the API remains down, the proxy serves stale cached rates for up to **1 hour** (configurable via `CACHE_TTL_SECONDS`). After the TTL expires, the cache key is evicted and the proxy returns a `503 Service Unavailable`.
