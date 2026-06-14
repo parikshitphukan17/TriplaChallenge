@@ -106,6 +106,12 @@ GEM
     google-protobuf (4.35.0-aarch64-linux-musl)
       bigdecimal
       rake (~> 13.3)
+    google-protobuf (4.35.0-x86_64-darwin)
+      bigdecimal
+      rake (~> 13.3)
+    google-protobuf (4.35.0-x86_64-linux-musl)
+      bigdecimal
+      rake (~> 13.3)
     googleapis-common-protos-types (1.23.0)
       google-protobuf (~> 4.26)
     httparty (0.24.2)
@@ -271,6 +277,10 @@ GEM
     rdoc (6.14.2)
       erb
       psych (>= 4.0.0)
+    redis (5.4.1)
+      redis-client (>= 0.22.0)
+    redis-client (0.30.0)
+      connection_pool
     reline (0.6.2)
       io-console (~> 0.5)
     request_store (1.7.0)
@@ -326,6 +336,7 @@ PLATFORMS
 
 DEPENDENCIES
   bootsnap
+  connection_pool
   debug
   httparty
   listen (~> 3.3)
@@ -337,6 +348,7 @@ DEPENDENCIES
   prometheus_exporter
   puma (>= 5.0)
   rails (~> 7.1.5, >= 7.1.5.2)
+  redis
   rspec-rails
   rswag-api
   rswag-specs

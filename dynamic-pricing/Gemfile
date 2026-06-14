@@ -58,3 +58,7 @@ gem 'opentelemetry-instrumentation-rails'
 gem 'opentelemetry-instrumentation-net_http'
 gem 'opentelemetry-exporter-otlp'
 
+# Redis & Connection Pooling
+gem 'redis'
+gem 'connection_pool'
+
