@@ -2,16 +2,20 @@ require 'swagger_helper'
 
 RSpec.describe 'api/v1/pricing', type: :request do
   before(:all) do
-    @old_cache = Rails.cache
-    Rails.cache = ActiveSupport::Cache::MemoryStore.new
+    if ENV['CACHE_PROVIDER_TYPE'] == 'rails_cache'
+      @old_cache = Rails.cache
+      Rails.cache = ActiveSupport::Cache::MemoryStore.new
+    end
   end
 
   after(:all) do
-    Rails.cache = @old_cache
+    if ENV['CACHE_PROVIDER_TYPE'] == 'rails_cache'
+      Rails.cache = @old_cache
+    end
   end
 
   before(:each) do
-    Rails.cache.clear
+    Api::V1::PricingService.cache_provider.clear_cache
   end
 
   path '/api/v1/pricing' do
@@ -159,8 +163,7 @@ Served when the rate is older than 5 minutes due to upstream API downtime or syn
         before do
           # Cache rates map exists but does not contain our key
           rates_data = { "Summer:FloatingPointResort:BooleanTwin" => 55555 }
-          payload = { rates: rates_data, fetched_at: Time.current }
-          Rails.cache.write("dynamic_pricing:rates_map", payload)
+          Api::V1::PricingService.cache_provider.write_rates(rates_data)
         end
 
         run_test!
@@ -187,7 +190,7 @@ Served when the rate is older than 5 minutes due to upstream API downtime or syn
         let(:room) { 'SingletonRoom' }
 
         before do
-          Rails.cache.clear
+          Api::V1::PricingService.cache_provider.clear_cache
           # Stub the sync refresh to fail so it returns 503
           allow_any_instance_of(RefreshRatesJob).to receive(:perform).and_return(false)
         end
