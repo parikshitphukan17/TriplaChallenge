@@ -14,6 +14,10 @@ module Api::V1
       end
     end
 
+    def self.reset_cache_provider!
+      @cache_provider = nil
+    end
+
     def self.cache_key(period:, hotel:, room:)
       "#{period}:#{hotel}:#{room}"
     end
@@ -45,7 +49,12 @@ module Api::V1
     private
 
     def caching_disabled?
-      Rails.cache.is_a?(ActiveSupport::Cache::NullStore)
+      provider_type = ENV.fetch('CACHE_PROVIDER_TYPE', 'rails_cache')
+      if provider_type.to_s.downcase == 'redis'
+        false
+      else
+        Rails.cache.is_a?(ActiveSupport::Cache::NullStore)
+      end
     end
 
     def run_direct_fetch

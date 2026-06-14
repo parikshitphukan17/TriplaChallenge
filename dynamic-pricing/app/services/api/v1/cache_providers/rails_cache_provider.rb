@@ -6,10 +6,10 @@ module Api::V1::CacheProviders
       Rails.cache.read(RATES_KEY)
     end
 
-    def write_rates(rates, ttl = nil)
+    def write_rates(rates, ttl = nil, fetched_at: Time.current)
       payload = {
         rates: rates,
-        fetched_at: Time.current
+        fetched_at: fetched_at
       }
       expiration = ttl || ENV.fetch('CACHE_TTL_SECONDS', '3600').to_i
       # Store for up to the configured TTL to prevent serving excessively stale rates during outages
@@ -37,6 +37,12 @@ module Api::V1::CacheProviders
 
     def activate_cool_down(key, duration)
       Rails.cache.write(key, true, expires_in: duration)
+    end
+
+    def clear_cache
+      Rails.cache.delete(RATES_KEY)
+      Rails.cache.delete("dynamic_pricing:refresh_lock")
+      Rails.cache.delete("dynamic_pricing:api_cool_down")
     end
   end
 end

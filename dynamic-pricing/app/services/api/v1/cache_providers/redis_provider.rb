@@ -24,10 +24,10 @@ module Api::V1::CacheProviders
       nil
     end
 
-    def write_rates(rates, ttl = nil)
+    def write_rates(rates, ttl = nil, fetched_at: Time.current)
       payload = {
         rates: rates,
-        fetched_at: Time.current
+        fetched_at: fetched_at
       }.to_json
 
       expiration = ttl || ENV.fetch('CACHE_TTL_SECONDS', '3600').to_i
@@ -88,6 +88,18 @@ module Api::V1::CacheProviders
       true
     rescue => e
       Rails.logger.error("RedisProvider activate_cool_down error: #{e.message}")
+      false
+    end
+
+    def clear_cache
+      client_pool.with do |client|
+        client.del(RATES_KEY)
+        client.del("dynamic_pricing:refresh_lock")
+        client.del("dynamic_pricing:api_cool_down")
+      end
+      true
+    rescue => e
+      Rails.logger.error("RedisProvider clear_cache error: #{e.message}")
       false
     end
 
