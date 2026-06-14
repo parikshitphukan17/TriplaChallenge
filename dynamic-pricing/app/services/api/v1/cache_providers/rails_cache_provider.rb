@@ -6,13 +6,14 @@ module Api::V1::CacheProviders
       Rails.cache.read(RATES_KEY)
     end
 
-    def write_rates(rates)
+    def write_rates(rates, ttl = nil)
       payload = {
         rates: rates,
         fetched_at: Time.current
       }
-      # Store indefinitely to allow stale rate serving if upstream is down
-      Rails.cache.write(RATES_KEY, payload)
+      expiration = ttl || ENV.fetch('CACHE_TTL_SECONDS', '3600').to_i
+      # Store for up to the configured TTL to prevent serving excessively stale rates during outages
+      Rails.cache.write(RATES_KEY, payload, expires_in: expiration)
     end
 
     def acquire_lock(key, ttl)

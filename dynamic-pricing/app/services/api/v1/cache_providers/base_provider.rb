@@ -4,7 +4,7 @@ module Api::V1::CacheProviders
       raise NotImplementedError, "#{self.class} must implement read_rates"
     end
 
-    def write_rates(rates)
+    def write_rates(rates, ttl = nil)
       raise NotImplementedError, "#{self.class} must implement write_rates"
     end
 
