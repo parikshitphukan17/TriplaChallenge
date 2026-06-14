@@ -67,8 +67,9 @@ class RefreshRatesJob < ApplicationJob
       Rails.logger.warn("RefreshRatesJob failed on attempt #{attempt}/#{max_attempts}: #{e.message}")
       if attempt < max_attempts
         Observability::Metrics.observe_upstream_retry
-        sleep_time = backoff_base * (2**(attempt - 1))
-        Rails.logger.info("Retrying in #{sleep_time} seconds...")
+        backoff_time = backoff_base * (2**(attempt - 1))
+        sleep_time = rand(0.0..backoff_time.to_f)
+        Rails.logger.info("Retrying in #{sleep_time.round(2)} seconds (backoff limit: #{backoff_time}s)...")
         sleep(sleep_time)
         retry
       else
