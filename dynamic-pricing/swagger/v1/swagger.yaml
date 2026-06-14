@@ -71,29 +71,31 @@ paths:
           content:
             application/json:
               examples:
-                Fresh Rate (Default):
-                  summary: A fresh rate retrieved from the cache within the 5-minute
-                    validity window.
+                example_0:
                   value:
-                    resultInfo:
-                      code: S
-                      message: Success
-                      codeId: '1'
-                    data:
-                      rate: 15000
-                      disclaimer:
-                Stale Rate Fallback:
-                  summary: A stale rate served as a fallback due to upstream API downtime
-                    or synchronous locks.
-                  value:
-                    resultInfo:
-                      code: S
-                      message: Success
-                      codeId: '1'
-                    data:
-                      rate: 15000
-                      disclaimer: Rates are expired, please retry again in at least
-                        5 minutes to get latest rate
+                    Fresh Rate (Default):
+                      summary: A fresh rate retrieved from the cache within the 5-minute
+                        validity window.
+                      value:
+                        resultInfo:
+                          code: S
+                          message: Success
+                          codeId: '1'
+                        data:
+                          rate: 15000
+                          disclaimer:
+                    Stale Rate Fallback:
+                      summary: A stale rate served as a fallback due to upstream API
+                        downtime or synchronous locks.
+                      value:
+                        resultInfo:
+                          code: S
+                          message: Success
+                          codeId: '1'
+                        data:
+                          rate: 15000
+                          disclaimer: Rates are expired, please retry again in at
+                            least 5 minutes to get latest rate
               schema:
                 type: object
                 properties:

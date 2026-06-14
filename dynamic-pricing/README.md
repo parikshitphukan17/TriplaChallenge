@@ -97,12 +97,29 @@ http://localhost:3000/api-docs
 ```
 From here, you can explore schemas for success or error responses (`INVALID_PARAMETERS`, `RATE_NOT_FOUND`, etc.) and test the live API directly using the "Try it out" feature.
 
+#### Step 6: Task Scheduling (Cron Setup)
+To decouple the scheduler from the web process and ensure high reliability, configure a host-level crontab task.
+Run the following command in the host shell to edit your crontab:
+```bash
+crontab -e
+```
+Add the following line to execute the bulk pre-fetch task every 4 minutes (replace `/path/to/your/app` with the actual path to your repository, or use `docker compose exec -T interview-dev` command):
+```cron
+*/4 * * * * docker compose -f /path/to/your/app/docker-compose.yml exec -T interview-dev bundle exec rake rates:refresh
+```
+Alternatively, if running outside Docker in production:
+```cron
+*/4 * * * * cd /path/to/your/app && bundle exec rake rates:refresh
+```
+
 ---
 
 #### Configuration Options
 By default, the app uses a file-based cache and local locking. You can configure the application behavior by passing environment variables:
 * `CACHE_PROVIDER_TYPE`: Toggle the caching backend (`redis` or `rails_cache`).
 * `REDIS_URL`: Redis connection URL (e.g. `redis://localhost:6379/0`).
+* `REDIS_POOL_SIZE`: Pool size for Redis connection pooling (default: `5`).
+* `CACHE_TTL_SECONDS`: Expiry limit/Time-To-Live in seconds for cached rates (default: `3600`, i.e., 1 hour).
 * `RATE_API_TIMEOUT_SECONDS`: Dynamic upstream API timeout in seconds (default: `3.0`).
 * `PROMETHEUS_COLLECTOR_URL`: Custom URL pointing to the Prometheus Exporter server (default: `http://localhost:9394`).
 * `OTEL_EXPORTER_OTLP_ENDPOINT`: Target OpenTelemetry collector URL (e.g., `http://localhost:4317`).
@@ -110,47 +127,34 @@ By default, the app uses a file-based cache and local locking. You can configure
 
 ---
 
-#### Observability & Observability Telemetry
-The application includes a built-in production-grade observability stack:
-1. **JSON Logs (`lograge`)**: Rails logs are formatted as single-line JSON payloads and automatically append OpenTelemetry `trace_id` and `span_id` context details.
-2. **HTTP Traces (`opentelemetry`)**: Automatically traces inbound HTTP requests, database SQL operations, and outbound client calls.
-3. **Prometheus Metrics (`prometheus_exporter`)**:
-   - Spins up a local metrics aggregator container.
-   - Access metrics locally by scraping: `curl http://localhost:9394/metrics`.
-   - Metrics include: cache hits/misses, circuit breaker state, upstream failures (timeout, connection failed, etc.), and job execution duration.
-
-
-
----
-
 ## 🛠️ Optimization Details & Architecture Decisions
 
 We have fully optimized the proxy service to handle 10,000+ daily requests within the 1,000 requests/day upstream API limit. Below is an overview of the design choices made. For a deep-dive technical analysis (including concurrency mathematics, Little's Law, and thread safety), please refer to **[README_CONSIDERATIONS.md](file:///Users/parikshitphukan/Desktop/Repo/interview/dynamic-pricing/README_CONSIDERATIONS.md)**.
 
-### 1. Capacity Planning & Single-Pod Setup
+### 1. Capacity Planning & Multi-Pod Redis Scaling
 * **The Calculations:**
   - **Volume:** 10,000 requests/day $\approx$ $0.116$ requests/sec (RPS) on average.
   - **Peak Volume (10x):** $1.16$ RPS.
   - **Cache Read Latency:** $< 5 \text{ ms}$.
   - **Peak Concurrency (Little's Law):** $L = 1.16 \text{ RPS} \times 0.005 \text{ seconds} \approx 0.0058$ concurrent requests.
-  - **Conclusion:** A single container pod running Puma (5 threads) can handle up to **1,000 RPS** when reading from cache. Therefore, **1 pod is more than sufficient**, and a distributed cache like Redis is not required for the initial setup.
+  - **Conclusion:** A single container pod running Puma (5 threads) can handle up to **1,000 RPS** when reading from cache. Therefore, **1 pod is more than sufficient**, but to prepare the system for multi-pod horizontal scaling and state sharing, we integrated a centralized Redis caching backend.
+* **Connection Pooling:** We added thread-safe Redis connection pooling (using the `connection_pool` gem) to prevent socket pool exhaustion when multiple worker threads read and write cache/lock data concurrently.
 
-### 2. Proactive Bulk Pre-fetching
+### 2. Proactive Bulk Pre-fetching via External Cron
 * **Why it beats Cache-Aside:**
   - Standard lazy-loading (Cache-Aside) suffers from **Cache Stampede (Thundering Herd)** where multiple concurrent requests on a cache miss hit the upstream API at the same time, quickly exhausting the quota.
   - The parameter space is closed and small: $4 \text{ periods} \times 3 \text{ hotels} \times 3 \text{ rooms} = 36$ total combinations.
   - The Pricing Model API supports querying an array of attributes in a single request.
-  - **Our Solution:** A background scheduler thread runs every **4 minutes** to trigger `RefreshRatesJob`, which queries all 36 combinations in a **single bulk API request** and caches them.
+  - **Our Solution:** A decoupled cron job triggers the Rake task `rates:refresh` every **4 minutes** to run the bulk pre-fetch. This completely removes the fragile, in-process background thread from the Puma server processes, saving memory and eliminating Puma restart issues.
   - **Quota Consumption:** $\frac{24 \times 60}{4} = 360$ API requests/day (only **36%** of the 1,000 requests/day quota), ensuring users experience **100% cache hits** with sub-10ms response times.
 
 ### 3. Provider Pattern for Cache & Locks
-* Even though Redis is not required for a single-pod setup, we implemented a modular **Provider Pattern** defining a standard interface for caching and locking operations:
+* We implemented a modular **Provider Pattern** defining a standard interface for caching and locking operations:
   - `RailsCacheProvider`: Wraps `Rails.cache` (default `:file_store` in development/production for sharing cache between server and console processes).
-  - `RedisProvider`: Direct connection using the `redis` client (with lazy loading to prevent boot crashes if the gem is not bundled).
+  - `RedisProvider`: Direct connection using a pooled `redis` client.
 * Easily switch providers via the `CACHE_PROVIDER_TYPE` environment variable.
 
 ### 4. Real-World Resiliency & Defensive Coding
 * **Synchronous-First Cache Expiration:** If the cache is expired (> 5 minutes old) but the scheduler hasn't updated it yet, incoming user requests try to acquire the refresh lock to fetch fresh rates synchronously (returning them immediately with no disclaimer on success). If the API is offline, they gracefully fall back to stale cached rates (with a warning disclaimer) and enqueue an asynchronous refresh job. If another worker is already fetching rates (lock is held), the request immediately serves the stale rate fallback without spin-locking, preventing web server thread starvation.
 * **Locking & Concurrency:** Both background jobs and cold-start requests utilize a provider lock key `dynamic_pricing:refresh_lock` with atomic writes (`unless_exist: true`) to prevent multiple processes from spamming the API simultaneously. If a request arrives on a cold start and the lock is held, it spin-locks (sleeps 100ms and retries, up to 1 second) and resolves from the cache warmed by the active fetcher. For expired but populated cache reads, if the lock is held, stale rates are served immediately with no spin-locking.
 * **API Outages & Socket Errors:** `RefreshRatesJob` sets a configurable HTTP timeout (defaulting to **3 seconds**, customizable via `RATE_API_TIMEOUT_SECONDS`) and handles socket errors, retrying up to 3 times with exponential backoff (sleeping 2s, then 4s). If all retries are exhausted, the proxy activates a **10-minute API Cool-Down (Circuit Breaker)**. During this cool-down, any scheduler cycles or user request sync-refreshes skip calling the upstream API to protect the 1,000 requests/day quota. If the API remains down, the proxy continues serving stale cached rates indefinitely (deliberate design choice for maximum availability) rather than failing user booking funnels. If the cache is completely empty (e.g. cold start + API down), the proxy returns a `503 Service Unavailable`.
-

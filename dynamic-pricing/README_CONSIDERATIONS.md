@@ -38,12 +38,8 @@ $$L = \lambda \times W$$
    $$L_{\text{peak}} = 1.16 \text{ RPS} \times 0.005 \text{ seconds} \approx 0.0058 \text{ concurrent requests}$$
    Even under a massive flash spike of 100 requests arriving in the exact same second, peak concurrency is only $1.0$ concurrent request.
 
-### Pod Capacity Capability
-A single Puma process running Rails with the default pool of 5 threads can process:
-$$\text{Max Throughput} = \frac{5 \text{ threads}}{0.005 \text{ seconds latency}} = 1,000 \text{ RPS}$$
-
 - **Conclusion:** A single pod running the proxy can easily handle up to $1,000$ requests per second. With a peak requirement of only $1.16$ RPS, **1 pod is more than sufficient** to handle the 10,000 daily requests.
-- **Redis Decision:** Since 1 pod is sufficient, a distributed cache layer like **Redis is NOT strictly needed**. We can use Rails' local cache (`ActiveSupport::Cache::MemoryStore` or `FileStore`) and local memory locks to keep our infrastructure footprint minimal, robust, and cost-effective.
+- **Redis Decision:** Although 1 pod is sufficient, production environments often scale out to multi-pod deployments to ensure high availability and redundancy. To support this state sharing (so all pods share the same cached rates and refresh locks), we integrated a centralized **Redis cache provider** with a thread-safe **Connection Pool** (using the `connection_pool` gem). This prevents socket exhaustion when Puma thread pools query Redis concurrently.
 
 ---
 
@@ -121,11 +117,11 @@ If the cache is empty on server boot and a user request arrives before the first
 - **Lock Held (Concurrency):** Other requests enter a **spin-lock with backoff** (sleeping for 100ms and checking the cache, up to 1 second) rather than calling the API. They resolve directly from the warmed cache.
 
 ### 2. Upstream API Downtime (Expired Cache & Resiliency)
-* **Strategy (Resilient with Disclaimer & Indefinite Cache):**
-  - If the upstream API is down, the background job will fail.
-  - Retries with exponential backoff (up to 3 attempts, waiting 2s, then 4s between attempts) will run to recover from transient glitches and socket errors.
-  - We store cached rates **indefinitely** (with no cache TTL expiration). This is a deliberate resilience decision: if the API suffers an extended outage (e.g., lasting more than a day), the proxy can continue to serve the last known rates alongside the stale rate disclaimer rather than returning a 503 error page, ensuring business continuity.
-  - If the 5-minute validity window passes:
+* **Strategy (Resilient with Disclaimer & 1-Hour Cache Limit):**
+  - If the upstream API is down, the background refresh job will fail.
+  - Retries with exponential backoff (up to 3 attempts, starting at 2s, then 4s, including random jitter to prevent synchronized retry requests) will run to recover from transient glitches.
+  - To prevent serving excessively stale rates during extended upstream outages, we enforce a strict **1-hour stale cache degradation limit** (by setting a 1-hour TTL on cache writes in both the memory and Redis providers).
+  - If the 5-minute validity window passes but the rates are less than 1 hour old:
     - **If stale rates exist:** We return the stale rate with a warning disclaimer:
       ```json
       {
@@ -141,7 +137,7 @@ If the cache is empty on server boot and a user request arrives before the first
       }
       ```
       This ensures high availability during transient API outages. We also write a warning to the Rails logger.
-    - **If no stale rates exist (Cold Start + API Outage):** We return a `503 Service Unavailable` error:
+    - **If rates are more than 1 hour old (Cache Expired / Empty + API Outage):** The cache provider will automatically delete the key due to TTL expiration, resulting in a cache miss. The proxy will treat this as a cold-start and attempt to fetch from the upstream API. If the API is still down, the proxy returns a `503 Service Unavailable` error instead of serving stale data older than 1 hour:
       ```json
       {
         "resultInfo": {
