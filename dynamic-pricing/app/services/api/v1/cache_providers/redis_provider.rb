@@ -1,7 +1,5 @@
 module Api::V1::CacheProviders
   class RedisProvider < BaseProvider
-    RATES_KEY = "dynamic_pricing:rates_map".freeze
-
     def initialize(redis_url = ENV.fetch('REDIS_URL', 'redis://localhost:6379/0'))
       require 'redis'
       require 'connection_pool'
@@ -25,21 +23,21 @@ module Api::V1::CacheProviders
     end
 
     def write_rates(rates, ttl = nil, fetched_at: Time.current)
-      payload = {
-        rates: rates,
-        fetched_at: fetched_at
-      }.to_json
-
-      expiration = ttl || ENV.fetch('CACHE_TTL_SECONDS', '3600').to_i
-      client_pool.with do |client|
-        # Set the key with a configurable Time-to-Live (TTL)
-        client.set(RATES_KEY, payload, ex: expiration.to_i)
-      end
-      true
-    rescue => e
-      Rails.logger.error("RedisProvider write_rates error: #{e.message}")
-      false
-    end
+       payload = {
+         rates: rates,
+         fetched_at: fetched_at
+       }.to_json
+ 
+       expiration = cache_ttl(ttl)
+       client_pool.with do |client|
+         # Set the key with a configurable Time-to-Live (TTL)
+         client.set(RATES_KEY, payload, ex: expiration.to_i)
+       end
+       true
+     rescue => e
+       Rails.logger.error("RedisProvider write_rates error: #{e.message}")
+       false
+     end
 
     def acquire_lock(key, ttl)
       # SET key value NX PX (milliseconds)

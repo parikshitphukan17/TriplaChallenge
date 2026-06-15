@@ -1,7 +1,5 @@
 module Api::V1::CacheProviders
   class RailsCacheProvider < BaseProvider
-    RATES_KEY = "dynamic_pricing:rates_map".freeze
-
     def read_rates
       Rails.cache.read(RATES_KEY)
     end
@@ -11,7 +9,7 @@ module Api::V1::CacheProviders
         rates: rates,
         fetched_at: fetched_at
       }
-      expiration = ttl || ENV.fetch('CACHE_TTL_SECONDS', '3600').to_i
+      expiration = cache_ttl(ttl)
       # Store for up to the configured TTL to prevent serving excessively stale rates during outages
       Rails.cache.write(RATES_KEY, payload, expires_in: expiration)
     end

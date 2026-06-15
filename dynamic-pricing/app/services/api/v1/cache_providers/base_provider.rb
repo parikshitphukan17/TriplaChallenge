@@ -1,5 +1,7 @@
 module Api::V1::CacheProviders
   class BaseProvider
+    RATES_KEY = "dynamic_pricing:rates_map".freeze
+
     def read_rates
       raise NotImplementedError, "#{self.class} must implement read_rates"
     end
@@ -30,6 +32,10 @@ module Api::V1::CacheProviders
 
     def clear_cache
       raise NotImplementedError, "#{self.class} must implement clear_cache"
+    end
+
+    def cache_ttl(override_ttl = nil)
+      override_ttl || ENV.fetch('CACHE_TTL_SECONDS', '3600').to_i
     end
   end
 end
