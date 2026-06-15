@@ -225,6 +225,21 @@ RSpec.describe Api::V1::PricingService, type: :service do
         expect(key).to eq("Summer:FloatingPointResort:SingletonRoom")
       end
 
+      it "correctly resolves cache TTL using CACHE_TTL_SECONDS environment variable or defaults to 1 hour" do
+        provider = Api::V1::PricingService.cache_provider
+        
+        # Test override TTL
+        expect(provider.cache_ttl(500)).to eq(500)
+
+        # Test environment variable configuration
+        allow(ENV).to receive(:fetch).with('CACHE_TTL_SECONDS', '3600').and_return('7200')
+        expect(provider.cache_ttl).to eq(7200)
+
+        # Test default fallback (1 hour = 3600 seconds)
+        allow(ENV).to receive(:fetch).with('CACHE_TTL_SECONDS', '3600').and_call_original
+        expect(provider.cache_ttl).to eq(3600)
+      end
+
       it "skips sync refresh and returns stale rates immediately if cool-down is active" do
         rates_data = {
           "Summer:FloatingPointResort:SingletonRoom" => "12345"
