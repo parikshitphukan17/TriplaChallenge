@@ -175,7 +175,7 @@ We implement a defensive **Synchronous-First Cache Expiration** pattern to handl
 * **API Cool-Down Guard:**
   To solve this, we implement a Cool-Down (Circuit Breaker) key `dynamic_pricing:api_cool_down` in the cache provider:
   1. When `RefreshRatesJob` fails after all 3 retries, it writes the cool-down key to the cache with a **10-minute expiry (TTL)**.
-  2. Before any API calls are made, the cron-triggered refresh job (`rake rates:refresh`) checks this key and exits immediately if active.
+  2. Before any API calls are made, the scheduler-triggered refresh job (`rake rates:refresh`) checks this key and exits immediately if active.
   3. Before triggering any synchronous fetch, `PricingService` checks this key. If active, it skips the sync fetch attempt, avoids hitting the API, and serves the cached stale rates immediately.
 
 * **Outage Quota Calculation:**
