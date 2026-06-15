@@ -19,6 +19,7 @@ services:
     environment:
       - CACHE_PROVIDER_TYPE=redis
       - REDIS_URL=redis://redis:6379/0
+      - RAILS_LOG_TO_STDOUT=true
     depends_on:
       - redis
 
@@ -33,6 +34,24 @@ services:
       - PROMETHEUS_COLLECTOR_URL=http://prometheus-exporter:9394
       - CACHE_PROVIDER_TYPE=redis
       - REDIS_URL=redis://redis:6379/0
+      - RAILS_LOG_TO_STDOUT=true
+    depends_on:
+      - rate-api
+      - prometheus-exporter
+      - redis
+
+  scheduler:
+    build: .
+    command: sh -c "while true; do bundle exec rake rates:refresh; sleep 240; done"
+    restart: always
+    volumes:
+      - .:/rails
+    environment:
+      - RATE_API_URL=http://rate-api:8080
+      - PROMETHEUS_COLLECTOR_URL=http://prometheus-exporter:9394
+      - CACHE_PROVIDER_TYPE=redis
+      - REDIS_URL=redis://redis:6379/0
+      - RAILS_LOG_TO_STDOUT=true
     depends_on:
       - rate-api
       - prometheus-exporter

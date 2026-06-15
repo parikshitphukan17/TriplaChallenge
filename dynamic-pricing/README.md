@@ -97,17 +97,21 @@ http://localhost:3000/api-docs
 ```
 From here, you can explore schemas for success or error responses (`INVALID_PARAMETERS`, `RATE_NOT_FOUND`, etc.) and test the live API directly using the "Try it out" feature.
 
-#### Step 6: Task Scheduling (Cron Setup)
-To decouple the scheduler from the web process and ensure high reliability, configure a host-level crontab task.
-Run the following command in the host shell to edit your crontab:
-```bash
-crontab -e
-```
-Add the following line to execute the bulk pre-fetch task every 4 minutes (replace `/path/to/your/app` with the actual path to your repository, or use `docker compose exec -T interview-dev` command):
-```cron
-*/4 * * * * docker compose -f /path/to/your/app/docker-compose.yml exec -T interview-dev bundle exec rake rates:refresh
-```
-Alternatively, if running outside Docker in production:
+#### Step 6: Task Scheduling (Automated Scheduler)
+The background scheduler is fully automated and runs inside its own lightweight Docker container (`scheduler`). It boots automatically along with the other services, executing the pre-fetch task every 4 minutes. **No manual host cron setup is required.**
+
+* **To watch the scheduler logs in real-time:**
+  ```bash
+  docker compose logs -f scheduler
+  ```
+
+* **To manually trigger the pre-fetch task immediately (for testing):**
+  ```bash
+  docker compose exec interview-dev bundle exec rake rates:refresh
+  ```
+
+##### Production Cron Alternative (If deploying without Docker Compose scheduler service)
+If you deploy this in an environment where you prefer to schedule tasks via the host OS `cron` daemon, you can use:
 ```cron
 */4 * * * * cd /path/to/your/app && bundle exec rake rates:refresh
 ```
