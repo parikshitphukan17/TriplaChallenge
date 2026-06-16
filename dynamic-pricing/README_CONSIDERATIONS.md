@@ -33,7 +33,7 @@ $$L = \lambda \times W$$
    Applying a standard industry peak-to-average traffic multiplier of **10x** to account for high-volatility peak periods (e.g. promotions, morning rushes):
    $$\lambda_{\text{peak}} = 0.116 \times 10 \approx 1.16 \text{ RPS}$$
 4. **Cache Read Latency ($W$):**
-   Reading cached prices from local memory (`ActiveSupport::Cache::MemoryStore`) takes less than **$1 \text{ ms}$** ($0.001$ seconds). To be conservative, we assume an average cache read latency of **$5 \text{ ms}$** ($0.005$ seconds).
+   Reading cached prices from Redis takes less than **$5 \text{ ms}$** on average ($0.005$ seconds). For the `RailsCacheProvider` using `:file_store`, reads are slightly slower but still well within the sub-10ms target.
 5. **Peak Concurrency ($L_{\text{peak}}$):**
    $$L_{\text{peak}} = 1.16 \text{ RPS} \times 0.005 \text{ seconds} \approx 0.0058 \text{ concurrent requests}$$
    Even under a massive flash spike of 100 requests arriving in the exact same second, peak concurrency is only $1.0$ concurrent request.
@@ -75,8 +75,8 @@ Although Redis is not required for the single-pod setup, we design the caching a
 ### Interface & Adaptors
 We define a common interface for caching and locking operations:
 - `CacheProviders::BaseProvider`: Interface defining `read_rates`, `write_rates`, `acquire_lock`, and `release_lock`.
-- `CacheProviders::RailsCacheProvider`: Implementation using `Rails.cache` (ideal for single-pod deployments using MemoryStore/FileStore).
-- `CacheProviders::RedisProvider`: Implementation using direct `Redis` connections (for multi-pod distributed environments).
+- `CacheProviders::RailsCacheProvider`: Implementation using `Rails.cache` with `:file_store` (ideal for single-pod deployments, shares cache between server and console processes).
+- `CacheProviders::RedisProvider`: Implementation using direct `Redis` connections with a thread-safe `ConnectionPool` (for multi-pod distributed environments, used by default in Docker Compose).
 
 ### Cache Key Structure & Lookup Example
 To optimize cache lookup times and minimize roundtrips (especially for network-based stores like Redis), we cache the entire rates map under a single parent key:
@@ -110,11 +110,13 @@ When a user queries the proxy endpoint with:
 ## 5. Edge Cases & Resiliency
 
 ### 1. Cold Start Cache Warmup
-If the cache is empty on server boot and a user request arrives before the first scheduler cycle:
+In practice, the `scheduler` container fires `rake rates:refresh` immediately on boot (before `docker compose up` returns), so the cache is pre-warmed before the first user request arrives. However, the cold-start handler exists as a defensive safety net for edge cases — for example, if the scheduler container fails to start, or if a developer runs the web server without the full Docker Compose stack.
+
+If the cache is empty and a user request arrives:
 - The request sees a cache miss.
 - It attempts to acquire the refresh lock.
-- **Lock Acquired:** The process runs the bulk API call, warms up the cache for all 36 combinations, and serves the rate.
-- **Lock Held (Concurrency):** Other requests enter a **spin-lock with backoff** (sleeping for 100ms and checking the cache, up to 1 second) rather than calling the API. They resolve directly from the warmed cache.
+- **Lock Acquired:** The process runs the bulk API call synchronously, warms up the cache for all 36 combinations, and serves the rate.
+- **Lock Held (Concurrency):** Other concurrent requests enter a **spin-lock with backoff** (sleeping for 100ms and checking the cache, up to 1 second) rather than calling the API. They resolve directly from the warmed cache.
 
 ### 2. Upstream API Downtime (Expired Cache & Resiliency)
 * **Strategy (Resilient with Disclaimer & 1-Hour Cache Limit):**
