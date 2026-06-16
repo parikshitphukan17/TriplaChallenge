@@ -68,19 +68,19 @@ Send a sample GET request to verify the service is successfully reading rates fr
 ```bash
 curl 'http://localhost:3000/api/v1/pricing?period=Summer&hotel=FloatingPointResort&room=SingletonRoom'
 ```
-*Note: The first request triggers a cold-start sync fetch to populate the cache. Subsequent requests will be served in under 10ms.*
+*Note: The `scheduler` container pre-warms the cache immediately on startup. All requests, including the very first one, are served from cache in under 10ms.*
 
 #### Step 3: Run the RSpec Test Suite
 Run the automated RSpec tests to verify all caching, locking, retries, Cartesian mappings, and error status code handling:
 ```bash
 # Run the full RSpec test suite
-docker compose exec interview-dev env RAILS_ENV=test bundle exec rspec
+docker compose run --rm -e RAILS_ENV=test interview-dev bundle exec rspec
 
 # Run service unit specs only
-docker compose exec interview-dev env RAILS_ENV=test bundle exec rspec spec/services/api/v1/pricing_service_spec.rb
+docker compose run --rm -e RAILS_ENV=test interview-dev bundle exec rspec spec/services/api/v1/pricing_service_spec.rb
 
 # Run request integration specs only
-docker compose exec interview-dev env RAILS_ENV=test bundle exec rspec spec/requests/api/v1/pricing_spec.rb
+docker compose run --rm -e RAILS_ENV=test interview-dev bundle exec rspec spec/requests/api/v1/pricing_spec.rb
 ```
 
 #### Step 4: Update the Swagger Documentation
@@ -162,11 +162,14 @@ We have fully optimized the proxy service to handle 10,000+ daily requests withi
   - The Pricing Model API supports querying an array of attributes in a single request.
   - **Our Solution:** A decoupled background `scheduler` container triggers the Rake task `rates:refresh` every **4 minutes** to run the bulk pre-fetch. This completely removes the fragile, in-process background thread from the Puma server processes, saving memory and avoiding thread lifecycle issues during Puma restarts.
   - **Quota Consumption:** $\frac{24 \times 60}{4} = 360$ API requests/day (only **36%** of the 1,000 requests/day quota), ensuring users experience **100% cache hits** with sub-10ms response times.
+* **Why Docker container over host-level cron:**
+  - A host `crontab` requires manual setup on every machine (developer laptops, CI servers, production hosts), each with different shells and `PATH` environments. On macOS, for example, cron runs without `/usr/local/bin` in its `PATH`, which means `docker` itself cannot be found without extra workarounds.
+  - The Docker `scheduler` service starts automatically with `docker compose up -d`, requires zero host configuration, shares the same environment variables as the web service, and outputs logs directly into `docker compose logs`. It is self-healing via `restart: always`.
 
 ### 3. Provider Pattern for Cache & Locks
 * We implemented a modular **Provider Pattern** defining a standard interface for caching and locking operations:
-  - `RailsCacheProvider`: Wraps `Rails.cache` (default `:file_store` in development/production for sharing cache between server and console processes).
-  - `RedisProvider`: Direct connection using a pooled `redis` client.
+  - `RailsCacheProvider`: Wraps `Rails.cache` (`:file_store` by default, suitable for single-process or local environments).
+  - `RedisProvider`: Direct connection using a pooled `redis` client, used by default in the Docker Compose environment for multi-pod readiness.
 * Easily switch providers via the `CACHE_PROVIDER_TYPE` environment variable.
 
 ### 4. Real-World Resiliency & Failure Handling
