@@ -223,3 +223,28 @@ Observability is a critical requirement for production APIs, enabling operations
 * **Downtime Fault Tolerance:**
   All metric writes are wrapped in safe rescue blocks in `Observability::Metrics`. If the collector daemon or container crashes, the proxy service fails-safe and logs warnings to STDOUT, but continues to serve user requests normally without raising exceptions.
 
+---
+
+## 7. Decoupled Scheduling vs. Rails Initializers (Anti-Pattern)
+
+We completely avoided running background scheduler loops from Rails initializers (`config/initializers/`). This section details the critical pitfalls of initializer-based scheduling in Ruby on Rails applications and why our decoupled Rake task architecture is the standard for production environments.
+
+### The Pitfalls of Initializer-Based Scheduling
+
+1. **The Multiplier Effect (Quota Exhaustion)**:
+   In production, Rails application servers (like Puma or Unicorn) spawn multiple **worker processes** (forked OS processes) to achieve concurrency. Because initializers run on application boot, *every single worker process* will spawn its own copy of the background thread. If you run 4 workers, your refresh frequency quadruples, which would instantly exhaust the 1,000 requests/day upstream API limit.
+2. **Execution on Utility Tasks**:
+   Initializers run for any CLI command that boots the Rails environment. Spawning scheduling threads in an initializer means they would start executing when running database migrations (`rails db:migrate`), assets precompilation (`rails assets:precompile`), opening a debugging shell (`rails console`), or running the automated test suite (`rspec`).
+3. **Puma Process Lifecycles**:
+   Web server processes are dynamically recycled, killed, or restarted by process managers (like systemd, kubernetes, or puma's clustered mode). Threads spawned inside initializers are not managed by these process managers, leading to thread leaks, orphaned loops, or interrupted writes.
+
+### Our Decoupled Architecture
+
+* **Isolated Rake Task (`rake rates:refresh`):** 
+  The bulk-fetching and caching logic is encapsulated in a dedicated Rake task. Rake runs in an isolated, transient process that exits immediately upon completion.
+* **External `scheduler` Container:**
+  We run a separate lightweight Docker container (`scheduler`) that runs a shell loop triggering the Rake task every 4 minutes. This completely decouples the scheduling loop from the web application processes.
+* **Production Mapping:**
+  This containerized design maps directly to production-grade deployment patterns (e.g., replacing the scheduler container with a Kubernetes `CronJob` or system `cron` daemon), ensuring only one instance ever executes at a time.
+
+
