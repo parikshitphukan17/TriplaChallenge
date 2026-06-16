@@ -15,10 +15,16 @@ module Api::V1::CacheProviders
     end
 
     def acquire_lock(key, ttl)
-      # Rails.cache.write with unless_exist: true acts as an atomic lock.
-      # It returns true if it successfully writes the key (lock acquired).
-      # Note: We cast the return value to a boolean to ensure standard API.
-      !!Rails.cache.write(key, Time.current, expires_in: ttl, unless_exist: true)
+      # FileStore and MemoryStore do not honour the `unless_exist:` option atomically —
+      # `write` always returns true regardless of whether the key existed.
+      # We use a process-level Mutex to make this safe for single-process (single-pod)
+      # environments. For multi-pod deployments, switch to RedisProvider which uses
+      # Redis SET NX for true distributed atomic locking.
+      lock_mutex.synchronize do
+        return false if Rails.cache.exist?(key)
+        Rails.cache.write(key, Time.current, expires_in: ttl)
+        true
+      end
     end
 
     def release_lock(key)
@@ -41,6 +47,11 @@ module Api::V1::CacheProviders
       Rails.cache.delete(RATES_KEY)
       Rails.cache.delete("dynamic_pricing:refresh_lock")
       Rails.cache.delete("dynamic_pricing:api_cool_down")
+    end
+    private
+
+    def lock_mutex
+      @lock_mutex ||= Mutex.new
     end
   end
 end

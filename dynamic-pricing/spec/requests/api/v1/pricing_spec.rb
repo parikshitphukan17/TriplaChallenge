@@ -241,7 +241,7 @@ Served when the rate is older than 5 minutes due to upstream API downtime or syn
       json_response = JSON.parse(response.body)
       expect(json_response.dig("resultInfo", "code")).to eq("F")
       expect(json_response.dig("resultInfo", "codeId")).to eq("INTERNAL_SERVER_ERROR")
-      expect(json_response.dig("resultInfo", "message")).to include("Database connection lost")
+      expect(json_response.dig("resultInfo", "message")).to eq("An unexpected internal error occurred. Please try again later.")
       expect(json_response["data"]).to be_nil
     end
   end

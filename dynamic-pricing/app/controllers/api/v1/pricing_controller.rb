@@ -29,7 +29,7 @@ class Api::V1::PricingController < ApplicationController
       end
     rescue => e
       Rails.logger.error("PricingController index unexpected error: #{e.class} - #{e.message}\n#{e.backtrace.first(10).join("\n")}")
-      render_error("An unexpected error occurred: #{e.message}", "INTERNAL_SERVER_ERROR", :internal_server_error)
+      render_error("An unexpected internal error occurred. Please try again later.", "INTERNAL_SERVER_ERROR", :internal_server_error)
     end
   end
 

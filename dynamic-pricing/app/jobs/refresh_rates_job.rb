@@ -40,7 +40,7 @@ class RefreshRatesJob < ApplicationJob
 
       response = RateApiClient.get_rates(combinations)
       if response.success?
-        parsed = JSON.parse(response.body)
+        parsed = response.parsed_response.is_a?(Hash) ? response.parsed_response : JSON.parse(response.body)
         rates_hash = {}
         parsed['rates'].each do |r|
           key = Api::V1::PricingService.cache_key(period: r['period'], hotel: r['hotel'], room: r['room'])
