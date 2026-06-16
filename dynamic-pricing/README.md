@@ -6,6 +6,9 @@
 
 Welcome to the Tripla backend engineering take-home assignment\! 🧑‍💻 This exercise is designed to simulate a real-world problem you might encounter as part of our team.
 
+> [!NOTE]
+> **Developer Note:** As I am not fully familiar with Ruby and Ruby on Rails, I pair-programmed with **Antigravity** (Google DeepMind's agentic AI coding assistant) to design the architecture, implement the code/tests, and configure the containerized environment.
+
 ⚠️ **Before you begin**, please review the main [FAQ](/README.md#frequently-asked-questions). It contains important information, **including our specific guidelines on how to submit your solution.**
 
 ## The Challenge
