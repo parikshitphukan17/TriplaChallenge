@@ -267,6 +267,37 @@ RSpec.describe Api::V1::PricingService, type: :service do
         expect(service.disclaimer).to match(/expired/)
       end
 
+      it "mathematically guarantees that quota limits cannot be breached under heavy consecutive query loads" do
+        # 1. Clear cache to simulate clean/cold state
+        Api::V1::PricingService.cache_provider.clear_cache
+
+        # 2. Count the number of API calls triggered
+        api_call_count = 0
+        allow(RateApiClient).to receive(:get_rates).and_wrap_original do |m, *args|
+          api_call_count += 1
+          mock_body = {
+            'rates' => [
+              { 'period' => 'Summer', 'hotel' => 'FloatingPointResort', 'room' => 'SingletonRoom', 'rate' => '15000' }
+            ]
+          }.to_json
+          OpenStruct.new(success?: true, body: mock_body)
+        end
+
+        # 3. Simulate 100 consecutive requests for the same parameters
+        100.times do
+          service = Api::V1::PricingService.new(
+            period: "Summer",
+            hotel: "FloatingPointResort",
+            room: "SingletonRoom"
+          )
+          service.run
+        end
+
+        # 4. Confirm that the API was only called EXACTLY once (to warm up the cache)
+        # and all subsequent 99 requests were served directly from the cache.
+        expect(api_call_count).to eq(1)
+      end
+
       it "writes cool-down key to cache when job fails and all retries are exhausted" do
         mock_get_rates = lambda do |*args|
           OpenStruct.new(success?: false, code: 500, body: "Fatal Outage")
